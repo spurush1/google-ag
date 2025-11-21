@@ -1,0 +1,113 @@
+version: '3.8'
+
+services:
+  # Databases
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: supplier_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - agent_network
+
+  neo4j:
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/password
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - agent_network
+
+  # Agents
+  supplier-agent:
+    build:
+      context: .
+      dockerfile: agents/supplier-agent/Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://user:password@postgres:5432/supplier_db
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PORT=8001
+    ports:
+      - "8001:8001"
+    depends_on:
+      - postgres
+    networks:
+      - agent_network
+
+  materials-agent:
+    build:
+      context: .
+      dockerfile: agents/materials-agent/Dockerfile
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PORT=8002
+    ports:
+      - "8002:8002"
+    networks:
+      - agent_network
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: agents/orchestrator/Dockerfile
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY} # Or Google API Key if using Gemini for routing
+      - SUPPLIER_AGENT_URL=http://supplier-agent:8001
+      - MATERIALS_AGENT_URL=http://materials-agent:8002
+      - BOM_AGENT_URL=http://bom-agent:8004
+      - PORT=8003
+    ports:
+      - "8003:8003"
+    depends_on:
+      - supplier-agent
+      - materials-agent
+      - bom-agent
+    networks:
+      - agent_network
+
+  bom-agent:
+    build:
+      context: .
+      dockerfile: agents/bom-agent/Dockerfile
+    environment:
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PORT=8004
+    ports:
+      - "8004:8004"
+    depends_on:
+      - neo4j
+    networks:
+      - agent_network
+
+  # Frontend
+  frontend:
+    build: ./frontend
+    environment:
+      - NEXT_PUBLIC_ORCHESTRATOR_URL=http://orchestrator:8003
+    ports:
+      - "3000:3000"
+    depends_on:
+      - orchestrator
+    networks:
+      - agent_network
+
+networks:
+  agent_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  neo4j_data:

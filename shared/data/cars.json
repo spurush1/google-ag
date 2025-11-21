@@ -1,0 +1,50 @@
+{
+    "cars": [
+        {
+            "make": "Honda",
+            "model": "Civic",
+            "year": 2022,
+            "suppliers": [
+                {
+                    "name": "Denso",
+                    "country": "Japan",
+                    "materials": [
+                        "Engine",
+                        "Transmission"
+                    ]
+                },
+                {
+                    "name": "Hitachi",
+                    "country": "Japan",
+                    "materials": [
+                        "Electronics",
+                        "Sensors"
+                    ]
+                }
+            ]
+        },
+        {
+            "make": "Ford",
+            "model": "F-150",
+            "year": 2023,
+            "suppliers": [
+                {
+                    "name": "Magna",
+                    "country": "Canada",
+                    "materials": [
+                        "Chassis",
+                        "Suspension"
+                    ]
+                },
+                {
+                    "name": "BorgWarner",
+                    "country": "USA",
+                    "materials": [
+                        "Turbocharger",
+                        "Transmission"
+                    ]
+                }
+            ]
+        }
+    ]
+}
