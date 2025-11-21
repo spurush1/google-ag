@@ -1,16 +1,42 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 import uvicorn
 import os
-from openai import OpenAI
-import json
+from pydantic_ai import Agent, RunContext
 
 from shared.utils import register_agent
-from shared.tools.search import get_search_tool
+from shared.tools.search import get_search_tool, SearchInterface
 
 app = FastAPI(title="Materials Agent")
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# --- PydanticAI Agent Setup ---
+
+class MaterialResult(BaseModel):
+    part_name: str
+    oem_status: str = Field(description="Is it typically OEM or Aftermarket?")
+    manufacturer: str = Field(description="Top manufacturers")
+    origin_country: str = Field(description="Where is it mostly made?")
+    average_price: str = Field(description="Price range or average")
+    details: str = Field(description="Short summary of the part")
+
+# Define the agent with correct syntax
+material_agent = Agent(
+    'openai:gpt-4o',
+    deps_type=SearchInterface,
+    output_type=MaterialResult,  # Correct parameter name!
+    system_prompt="You are a Materials Expert. Use the search_web tool to find details about car parts."
+)
+
+@material_agent.tool
+async def search_web(ctx: RunContext[SearchInterface], query: str) -> str:
+    """Search the web for information."""
+    result = ctx.deps.search(query)
+    if "error" in result:
+        return f"Search Error: {result['error']}"
+    return result.get("result", "No results found.")
+
+# --- FastAPI Endpoints ---
 
 @app.on_event("startup")
 def on_startup():
@@ -44,81 +70,23 @@ def get_agent_card():
         "skills": [{"id": "find-material", "name": "Find Material Details"}]
     }
 
-
 class MaterialRequest(BaseModel):
     part_name: str
 
-class MaterialResponse(BaseModel):
-    part_name: str
-    oem_status: str
-    manufacturer: str
-    origin_country: str
-    average_price: str
-    details: str
-    search_query: Optional[str] = None
-    search_result: Optional[str] = None
-
-@app.post("/find-material", response_model=MaterialResponse)
-def find_material(request: MaterialRequest):
-    # Get the configured search tool from Tools Hub
+@app.post("/find-material", response_model=MaterialResult)
+async def find_material(request: MaterialRequest):
+    # Get the configured search tool (dependency)
     search_tool = get_search_tool(os.getenv("SEARCH_PROVIDER", "google"))
     
-    # 1. Search Web using Tools Hub
-    search_query = f"Find details for car part '{request.part_name}': OEM status, manufacturer, country of origin, and average price."
-    context = search_tool.search(search_query)
-    
-    # Extract trace info if available
-    search_result = None
-    if isinstance(context, dict) and "error" not in context:
-        search_result = context.get("result")
-    else:
-        # Fallback: treat context as raw string
-        search_result = context if isinstance(context, str) else None
-
-    # 2. Extract Info using OpenAI with structured output
-    prompt = f"""
-    You are a Materials Expert. Analyze the following search results for the car part '{request.part_name}':
-    
-    Search Results:
-    {search_result or ''}
-    
-    Extract the following information:
-    - OEM Status (Is it typically OEM or Aftermarket?)
-    - Manufacturer (Top manufacturers)
-    - Origin Country (Where is it mostly made?)
-    - Average Price (Provide a price range or average)
-    
-    Return JSON format:
-    {{
-        "oem_status": "...",
-        "manufacturer": "...",
-        "origin_country": "...",
-        "average_price": "...",
-        "details": "Short summary..."
-    }}
-    """
-    
     try:
-        completion = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}],
-            response_format={"type": "json_object"}
+        # Run the agent
+        result = await material_agent.run(
+            f"Find details for car part '{request.part_name}': OEM status, manufacturer, country of origin, and average price.",
+            deps=search_tool
         )
-        content = completion.choices[0].message.content
-        data = json.loads(content)
-        
-        return MaterialResponse(
-            part_name=request.part_name,
-            oem_status=data.get("oem_status", "Unknown"),
-            manufacturer=data.get("manufacturer", "Unknown"),
-            origin_country=data.get("origin_country", "Unknown"),
-            average_price=data.get("average_price", "Unknown"),
-            details=data.get("details", "No details found."),
-            search_query=search_query,
-            search_result=search_result,
-        )
+        return result.output
     except Exception as e:
-        print(f"LLM Error: {e}")
+        print(f"Agent Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/health")
