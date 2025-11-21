@@ -1,4 +1,4 @@
-# Google Antigravity Test
+# Multi Agent AGUI test
 
 ## Overview
 
